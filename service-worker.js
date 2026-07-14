@@ -1,5 +1,6 @@
-const CACHE_NAME = "horario-udea-v1";
-const ASSETS = [
+const CACHE_NAME = "horario-udea";
+
+const APP_FILES = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
@@ -7,26 +8,90 @@ const ASSETS = [
   "./icons/icon-512.png"
 ];
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+// Instalación
+self.addEventListener("install", event => {
   self.skipWaiting();
-});
 
-self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((key) => key !== CACHE_NAME ? caches.delete(key) : null))
-    )
+    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_FILES))
   );
-  self.clients.claim();
 });
 
-self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request).catch(() => caches.match("./index.html"));
-    })
+// Activación
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    (async () => {
+      await self.clients.claim();
+
+      // Elimina cualquier caché vieja automáticamente
+      const keys = await caches.keys();
+
+      await Promise.all(
+        keys.map(key => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
+          }
+        })
+      );
+    })()
   );
+});
+
+// Peticiones
+self.addEventListener("fetch", event => {
+
+  if (event.request.method !== "GET") return;
+
+  // Para el HTML siempre intenta ir primero a Internet
+  if (
+    event.request.mode === "navigate" ||
+    event.request.destination === "document"
+  ) {
+
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+
+          const copy = response.clone();
+
+          caches.open(CACHE_NAME)
+            .then(cache => cache.put(event.request, copy));
+
+          return response;
+
+        })
+        .catch(() => caches.match(event.request))
+    );
+
+    return;
+  }
+
+  // Para CSS, JS, iconos...
+  event.respondWith(
+
+    caches.match(event.request).then(cacheResponse => {
+
+      const networkFetch = fetch(event.request)
+        .then(networkResponse => {
+
+          if (networkResponse.ok) {
+
+            caches.open(CACHE_NAME)
+              .then(cache =>
+                cache.put(event.request, networkResponse.clone())
+              );
+
+          }
+
+          return networkResponse;
+
+        })
+        .catch(() => cacheResponse);
+
+      return cacheResponse || networkFetch;
+
+    })
+
+  );
+
 });
