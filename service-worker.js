@@ -1,6 +1,5 @@
-const CACHE_NAME = "horario-udea";
-
-const APP_FILES = [
+const CACHE_NAME = "horario-udea-cache";
+const PRECACHE_URLS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
@@ -8,90 +7,81 @@ const APP_FILES = [
   "./icons/icon-512.png"
 ];
 
-// Instalación
-self.addEventListener("install", event => {
-  self.skipWaiting();
-
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_FILES))
-  );
+self.addEventListener("install", (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(PRECACHE_URLS);
+    self.skipWaiting();
+  })());
 });
 
-// Activación
-self.addEventListener("activate", event => {
-  event.waitUntil(
-    (async () => {
-      await self.clients.claim();
-
-      // Elimina cualquier caché vieja automáticamente
-      const keys = await caches.keys();
-
-      await Promise.all(
-        keys.map(key => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
-      );
-    })()
-  );
-});
-
-// Peticiones
-self.addEventListener("fetch", event => {
-
-  if (event.request.method !== "GET") return;
-
-  // Para el HTML siempre intenta ir primero a Internet
-  if (
-    event.request.mode === "navigate" ||
-    event.request.destination === "document"
-  ) {
-
-    event.respondWith(
-      fetch(event.request)
-        .then(response => {
-
-          const copy = response.clone();
-
-          caches.open(CACHE_NAME)
-            .then(cache => cache.put(event.request, copy));
-
-          return response;
-
-        })
-        .catch(() => caches.match(event.request))
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys.map((key) => {
+        if (key !== CACHE_NAME) return caches.delete(key);
+        return null;
+      })
     );
+    await self.clients.claim();
+  })());
+});
 
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (err) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    throw err;
+  }
+}
+
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+
+  const fetchPromise = fetch(request)
+    .then((response) => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => null);
+
+  return cached || fetchPromise;
+}
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  if (request.mode === "navigate") {
+    event.respondWith(networkFirst(request));
     return;
   }
 
-  // Para CSS, JS, iconos...
-  event.respondWith(
+  if (url.pathname.endsWith(".json") || url.pathname.endsWith(".webmanifest")) {
+    event.respondWith(networkFirst(request));
+    return;
+  }
 
-    caches.match(event.request).then(cacheResponse => {
-
-      const networkFetch = fetch(event.request)
-        .then(networkResponse => {
-
-          if (networkResponse.ok) {
-
-            caches.open(CACHE_NAME)
-              .then(cache =>
-                cache.put(event.request, networkResponse.clone())
-              );
-
-          }
-
-          return networkResponse;
-
-        })
-        .catch(() => cacheResponse);
-
-      return cacheResponse || networkFetch;
-
-    })
-
-  );
-
+  event.respondWith(staleWhileRevalidate(request));
 });
