@@ -1068,10 +1068,88 @@ button, input { font: inherit; }
 </script>
 <script>
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch(() => {});
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.register("./service-worker.js");
+
+      const updateBanner = document.getElementById("updateBanner");
+      const updateBtn = document.getElementById("updateBtn");
+
+      function showUpdateBanner() {
+        updateBanner.style.display = "flex";
+      }
+
+      function hideUpdateBanner() {
+        updateBanner.style.display = "none";
+      }
+
+      if (registration.waiting) {
+        showUpdateBanner();
+      }
+
+      registration.addEventListener("updatefound", () => {
+        const newWorker = registration.installing;
+        if (!newWorker) return;
+
+        newWorker.addEventListener("statechange", () => {
+          if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+            showUpdateBanner();
+          }
+        });
+      });
+
+      updateBtn.addEventListener("click", () => {
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      });
+
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        window.location.reload();
+      });
+
+      registration.update();
+
+      setInterval(() => {
+        registration.update();
+      }, 60000);
+
+    } catch (err) {
+      console.error("Error registrando el Service Worker:", err);
+    }
   });
 }
 </script>
+<div id="updateBanner" style="
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 9999;
+  display: none;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(15,23,42,.96);
+  color: white;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  border: 1px solid rgba(255,255,255,.12);
+">
+  <div>
+    <strong style="display:block; font-size:14px;">Hay una actualización disponible</strong>
+    <span style="font-size:12px; opacity:.85;">Toca actualizar para cargar la versión nueva.</span>
+  </div>
+  <button id="updateBtn" style="
+    border: none;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-weight: 700;
+    cursor: pointer;
+    background: #ffffff;
+    color: #0f172a;
+  ">Actualizar</button>
+</div>
 </body>
 </html>
